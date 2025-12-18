@@ -1,3 +1,4 @@
 .venv
 python research
 notebooks
+.DS_Store
