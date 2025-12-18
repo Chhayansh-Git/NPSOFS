@@ -1,0 +1,136 @@
+#!/usr/bin/env python3
+"""
+Simple NetG-PSO skeleton implementing:
+ - population encoding/decoding
+ - fitness evaluation using RandomForest (3-fold CV)
+ - a simple velocity regulation inspired by paper Eq.8/9 (fixed broadcasting bug)
+This is a minimal working implementation to validate the pipeline.
+"""
+import numpy as np
+import pickle
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import cross_val_score
+import random
+
+class NetGPSO:
+    def __init__(self, X, y, net_meta, pop_size=10, max_iter=10, w=0.7, c1=1.4, c2=1.4, alpha=0.9):
+        self.X = X
+        self.y = y
+        self.d = X.shape[1]
+        self.pop_size = pop_size
+        self.max_iter = max_iter
+        self.w = w; self.c1 = c1; self.c2 = c2
+        self.alpha = alpha  # weight for accuracy in fitness
+        # network meta: degrees and partition
+        self.deg = net_meta.get('degrees', {}) if isinstance(net_meta, dict) else {}
+        self.partition = net_meta.get('partition', {}) if isinstance(net_meta, dict) else {}
+        self._init_population()
+
+    def _init_population(self):
+        # positions in [0,1], velocities in [-1,1]
+        self.pos = np.random.rand(self.pop_size, self.d)
+        self.vel = np.random.uniform(-1, 1, size=(self.pop_size, self.d))
+        self.pbest = self.pos.copy()
+        self.pbest_score = np.array([self.fitness_from_pos(p) for p in self.pos])
+        # gbest is pbest with max score
+        self.gbest_idx = int(np.argmax(self.pbest_score))
+        self.gbest = self.pbest[self.gbest_idx].copy()
+        self.gbest_score = self.pbest_score[self.gbest_idx]
+        print(f"Initialized population: gbest_score={self.gbest_score:.4f}")
+
+    def decode(self, pos_vec):
+        return (pos_vec >= 0.5).astype(int)
+
+    def fitness_from_pos(self, pos_vec):
+        mask = self.decode(pos_vec).astype(bool)
+        # require at least 1 feature
+        if mask.sum() == 0:
+            return -1.0
+        Xs = self.X[:, mask]
+        clf = RandomForestClassifier(n_estimators=50, random_state=0)
+        try:
+            acc = cross_val_score(clf, Xs, self.y, cv=3, scoring='accuracy').mean()
+        except Exception:
+            return -1.0
+        # combine accuracy and simplicity
+        penalty = mask.sum() / float(self.d)
+        return self.alpha * acc - (1 - self.alpha) * penalty
+
+    def velocity_regulation(self, v, p, pj):
+        """
+        Fixes broadcasting issues by applying the amplification/attenuation
+        only to the masked positions using pj[mask].
+        - v: velocity vector (length d)
+        - p: position vector (length d)
+        - pj: selection-probabilities array (length d)
+        """
+        # ensure arrays
+        v_new = v.copy()
+        pj = np.asarray(pj)
+        # compute f1, f2 per-feature
+        f1 = pj * 0.2               # >0 amplification factor multiplier
+        f2 = (pj - 1.0) * 0.2       # <0 attenuation factor multiplier
+
+        # masks (boolean arrays)
+        rand_array = np.random.rand(self.d)
+        mask1 = (p < 0.5) & (v > 0) & (rand_array < pj)
+        mask2 = (p >= 0.5) & (v > 0) & (rand_array >= pj)
+
+        # Apply elementwise using masked slices (shapes align)
+        if mask1.any():
+            v_new[mask1] = v_new[mask1] * np.exp(f1[mask1])
+        if mask2.any():
+            v_new[mask2] = v_new[mask2] * np.exp(f2[mask2])
+
+        # also handle negative velocity cases similar to paper logic
+        # mask3: unselected features with negative vel and random < pj -> amplify (in direction)
+        mask3 = (p < 0.5) & (v < 0) & (rand_array < pj)
+        mask4 = (p >= 0.5) & (v < 0) & (rand_array >= pj)
+        if mask3.any():
+            # for negative v, multiplication by exp(f1) still preserves sign
+            v_new[mask3] = v_new[mask3] * np.exp(f1[mask3])
+        if mask4.any():
+            v_new[mask4] = v_new[mask4] * np.exp(f2[mask4])
+
+        return v_new
+
+    def compute_pj(self):
+        # compute pj per feature based on degree and simple group penalty
+        # fallback: uniform pj if degree mapping unavailable
+        try:
+            # If degrees are keyed by feature names not available here, fallback
+            if isinstance(self.deg, dict) and len(self.deg) == self.d:
+                # try to use values in insertion order
+                vals = list(self.deg.values())
+                pj = np.clip(np.array(vals) / (np.max(vals) + 1e-9), 0.01, 0.99)
+            else:
+                pj = np.clip(np.ones(self.d) * 0.5, 0.01, 0.99)
+        except Exception:
+            pj = np.clip(np.ones(self.d) * 0.5, 0.01, 0.99)
+        return pj
+
+    def run(self):
+        pj = self.compute_pj()
+        for it in range(self.max_iter):
+            for i in range(self.pop_size):
+                r1 = np.random.rand(self.d)
+                r2 = np.random.rand(self.d)
+                cognitive = self.c1 * r1 * (self.pbest[i] - self.pos[i])
+                social = self.c2 * r2 * (self.gbest - self.pos[i])
+                self.vel[i] = self.w * self.vel[i] + cognitive + social
+                # velocity regulation (now safe for broadcasting)
+                self.vel[i] = self.velocity_regulation(self.vel[i], self.pos[i], pj)
+                # update position
+                self.pos[i] = self.pos[i] + self.vel[i]
+                # keep bounds
+                self.pos[i] = np.clip(self.pos[i], 0.0, 1.0)
+                # evaluate
+                score = self.fitness_from_pos(self.pos[i])
+                if score > self.pbest_score[i]:
+                    self.pbest[i] = self.pos[i].copy()
+                    self.pbest_score[i] = score
+                    if score > self.gbest_score:
+                        self.gbest_score = score
+                        self.gbest = self.pos[i].copy()
+                        print(f"Iter {it} new gbest_score={self.gbest_score:.4f} features={self.decode(self.gbest).sum()}")
+        return self.gbest, self.gbest_score

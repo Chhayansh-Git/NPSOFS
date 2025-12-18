@@ -1,0 +1,6 @@
+seed=1 no-FS acc=0.5789
+seed=2 no-FS acc=0.8947
+seed=3 no-FS acc=0.6316
+seed=4 no-FS acc=0.8421
+seed=5 no-FS acc=0.7895
+no-FS acc mean/std: 0.7473684210526317 0.1218509147662129

@@ -1,0 +1,9 @@
+
+Post-pruning results for: experiments/selected_seed3_alpha0.80.txt
+------------------------------------------------------------------------
+Initial selected pool size: 386
+
+Top-10 features → Accuracy: 0.7895 | Precision: 0.8333 | Recall: 0.8333 | F1: 0.8333
+Top-20 features → Accuracy: 0.8421 | Precision: 0.9091 | Recall: 0.8333 | F1: 0.8696
+Top-30 features → Accuracy: 0.8421 | Precision: 0.9091 | Recall: 0.8333 | F1: 0.8696
+Top-50 features → Accuracy: 0.8421 | Precision: 0.9091 | Recall: 0.8333 | F1: 0.8696

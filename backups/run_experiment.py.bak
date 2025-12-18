@@ -1,0 +1,34 @@
+import sys, os
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+#!/usr/bin/env python3
+"""
+Run a short experiment:
+Usage:
+  python3 src/pso/run_experiment.py data/colon_processed.csv results/colon_network.pickle
+"""
+import sys
+import pandas as pd
+import numpy as np
+import pickle
+from pso.netg_pso import NetGPSO
+
+def main(data_csv, net_pickle):
+    df = pd.read_csv(data_csv)
+    X = df.drop(columns=['__label__']).values
+    y = df['__label__'].values
+    with open(net_pickle, 'rb') as f:
+        meta = pickle.load(f)
+    # attempt to map feature names to deg keys if necessary
+    # For now pass meta as-is
+    pso = NetGPSO(X, y, meta, pop_size=8, max_iter=6)
+    gbest, score = pso.run()
+    mask = (gbest >= 0.5).astype(int)
+    print("BEST score:", score)
+    print("selected features count:", mask.sum())
+
+if __name__ == "__main__":
+    if len(sys.argv) != 3:
+        print("Usage: python3 src/pso/run_experiment.py data/colon_processed.csv results/colon_network.pickle")
+        sys.exit(1)
+    main(sys.argv[1], sys.argv[2])
